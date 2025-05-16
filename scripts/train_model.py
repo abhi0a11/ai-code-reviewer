@@ -12,6 +12,9 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from src.data.dataset import load_dataset_from_file, prepare_dataset_for_training
 from src.training.trainer import get_training_args, create_trainer, train_model, evaluate_model
 import wandb
+from main import code_t5
+from datasets import load_dataset, Dataset
+import torch
 
 def parse_args():
     """
@@ -87,5 +90,50 @@ def main():
     
     print(f"Model saved to {args.final_model_dir}")
 
+def train_model():
+    # Load your training dataset or use the example dataset
+    # You can replace this with loading your actual dataset
+    data = {
+        "code": [
+            "def a_function(x, y)\n  return x * y",
+            "for i in range(5)\n  print(i)",
+            # ... more examples ...
+        ],
+        "corrected_code": [
+            "def a_function(x, y):\n \treturn x * y",
+            "for i in range(5):\n \tprint(i)",
+            # ... more examples ...
+        ],
+    }
+    
+    # Create dataset
+    dataset = Dataset.from_dict(data)
+    dataset = dataset.train_test_split(test_size=0.2)
+    
+    # Preprocess the dataset
+    tokenized_dataset = dataset.map(code_t5.preprocess_function, batched=True)
+    
+    # Fine-tune the model
+    trainer = code_t5.fine_tune(tokenized_dataset)
+    
+    # Save the model
+    code_t5.save_model(trainer)
+    
+    return trainer
+
 if __name__ == "__main__":
-    main()
+    # Set device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    
+    # Train the model
+    trainer = train_model()
+    
+    # Print training results
+    print("Training completed.")
+    print("Evaluation results:")
+    
+    # Get evaluation results and print each on a new line
+    eval_results = trainer.evaluate()
+    for key, value in eval_results.items():
+        print(f"{key}: {value}")

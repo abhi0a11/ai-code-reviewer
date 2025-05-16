@@ -3,65 +3,68 @@ import wandb
 import torch
 wandb.login()
 
-# Use 'Salesforce/codet5-base' for code correction
-model_name = "Salesforce/codet5-base"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForSeq2SeqLM.from_pretrained(model_name, low_cpu_mem_usage=True)
+# Create a CodeT5 model class for better reusability
+class CodeT5Model:
+    def __init__(self, model_name="Salesforce/codet5-base"):
+        self.model_name = model_name
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name, low_cpu_mem_usage=True)
+        
+    def review_and_correct_code(self, code):
+        inputs = self.tokenizer(code, return_tensors="pt", padding=True, truncation=True)
+        outputs = self.model.generate(**inputs)
+        corrected_code = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return corrected_code
+    
+    def preprocess_function(self, examples):
+        inputs = [ex for ex in examples["code"]]
+        targets = [ex for ex in examples["corrected_code"]]
+        # Reducing max length from 512 to 256 to save memory
+        model_inputs = self.tokenizer(inputs, max_length=256, truncation=True, padding="max_length")
+        # Use the text_target parameter instead of as_target_tokenizer
+        labels = self.tokenizer(text_target=targets, max_length=256, truncation=True, padding="max_length")
+        model_inputs["labels"] = labels["input_ids"]
+        return model_inputs
+    
+    def fine_tune(self, tokenized_dataset):
+        training_args = Seq2SeqTrainingArguments(
+            output_dir="./code_review_model",
+            eval_strategy="epoch",
+            learning_rate=2e-5,
+            per_device_train_batch_size=2,
+            per_device_eval_batch_size=2,
+            gradient_accumulation_steps=4,
+            weight_decay=0.01,
+            save_total_limit=3,
+            num_train_epochs=3,
+            predict_with_generate=True,
+            report_to="wandb",
+            fp16=False,
+        )
 
-def review_and_correct_code(code):
-    inputs = tokenizer(code, return_tensors="pt", padding=True, truncation=True)
-    outputs = model.generate(**inputs) # Changed model call to use generate for inference
-    corrected_code = tokenizer.decode(outputs[0], skip_special_tokens=True) # You'll likely need to adapt this part based on the model's output
-    return corrected_code
+        trainer = Seq2SeqTrainer(
+            model=self.model,
+            args=training_args,
+            train_dataset=tokenized_dataset["train"],
+            eval_dataset=tokenized_dataset["test"],
+        )
 
+        trainer.train()
+        return trainer
+    
+    def save_model(self, trainer, path="./fine_tuned_code_review_model"):
+        trainer.save_model(path)
+        
+    def load_fine_tuned_model(self, path="./fine_tuned_code_review_model"):
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(path)
+        return self
 
-def preprocess_function(examples):
-    inputs = [ex for ex in examples["code"]]
-    targets = [ex for ex in examples["corrected_code"]]
-    # Reducing max length from 512 to 256 to save memory
-    model_inputs = tokenizer(inputs, max_length=256, truncation=True, padding="max_length")
-    # Use the text_target parameter instead of as_target_tokenizer
-    labels = tokenizer(text_target=targets, max_length=256, truncation=True, padding="max_length")
-    model_inputs["labels"] = labels["input_ids"]
-    return model_inputs
-
-# Function to fine-tune the model
-def fine_tune_model(model, tokenized_dataset):
-    training_args = Seq2SeqTrainingArguments(
-        output_dir="./code_review_model",
-        # 'evaluation_strategy' has been replaced with 'eval_strategy'
-        eval_strategy="epoch",  # Use 'eval_strategy' instead of 'evaluation_strategy'
-        learning_rate=2e-5,
-        per_device_train_batch_size=2,  # Reduced from 8 to 2
-        per_device_eval_batch_size=2,   # Reduced from 8 to 2
-        gradient_accumulation_steps=4,  # Added gradient accumulation to compensate for smaller batch size
-        weight_decay=0.01,
-        save_total_limit=3,
-        num_train_epochs=3,
-        predict_with_generate=True,
-        report_to="wandb",
-        fp16=False,  # Disable mixed precision to reduce memory usage
-    )
-
-    trainer = Seq2SeqTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=tokenized_dataset["train"],
-        eval_dataset=tokenized_dataset["test"],
-    )
-
-    trainer.train()
-    return trainer
-
-
-
-# Function to save the model
-def save_model(trainer):
-    trainer.save_model("./fine_tuned_code_review_model")
+# Create an instance of the CodeT5Model
+code_t5 = CodeT5Model()
 
 # Example usage with a placeholder dataset
-# In a real scenario, replace this with your actual dataset loading and preprocessing
 from datasets import Dataset
+
 # Create a small example dataset
 data = {
      "code": [
@@ -116,6 +119,13 @@ data = {
 dataset = Dataset.from_dict(data)
 dataset = dataset.train_test_split(test_size=0.2)  # Split into train and validation
 
-tokenized_dataset = dataset.map(preprocess_function, batched=True)
-trainer = fine_tune_model(model, tokenized_dataset)
-save_model(trainer)
+# Use the instance methods for preprocessing and fine-tuning
+tokenized_dataset = dataset.map(code_t5.preprocess_function, batched=True)
+trainer = code_t5.fine_tune(tokenized_dataset)
+code_t5.save_model(trainer)
+
+# Example of how to use the model for inference
+example_code = "def say_hello(name)\n  print('Hello, ' + name)"
+corrected_code = code_t5.review_and_correct_code(example_code)
+print("Original code:", example_code)
+print("Corrected code:", corrected_code)
