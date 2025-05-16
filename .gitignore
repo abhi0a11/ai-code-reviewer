@@ -1,0 +1,9 @@
+# Ignore model files and directories
+*.safetensors
+*.bin
+*.pt
+*.pth
+__pycache__/
+wandb/
+code_review_model/
+fine_tuned_code_review_model/
