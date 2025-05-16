@@ -7,3 +7,11 @@ __pycache__/
 wandb/
 code_review_model/
 fine_tuned_code_review_model/
+.venv
+.env
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
